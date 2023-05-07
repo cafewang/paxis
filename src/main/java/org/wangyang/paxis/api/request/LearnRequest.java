@@ -7,9 +7,9 @@ import javax.validation.constraints.NotNull;
 
 @Getter
 @RequiredArgsConstructor
-public class ProposeRequest {
+public class LearnRequest {
     @NotNull
     private final Long instanceNumber;
     @NotNull
-    private final String proposedValue;
+    private final String proposalValue;
 }

@@ -1,27 +1,41 @@
 package org.wangyang.paxis.applicationservice;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
+import org.wangyang.paxis.api.request.AcceptRequest;
+import org.wangyang.paxis.api.request.LearnRequest;
+import org.wangyang.paxis.api.request.PrepareRequest;
 import org.wangyang.paxis.api.response.PrepareResponse;
 import org.wangyang.paxis.entity.AcceptedProposalValue;
 import org.wangyang.paxis.entity.AcceptedProposalValueId;
+import org.wangyang.paxis.entity.LearnedValue;
 import org.wangyang.paxis.entity.MinAcceptableProposal;
 import org.wangyang.paxis.entity.NextProposalNumber;
 import org.wangyang.paxis.repo.AcceptedProposalValueRepository;
+import org.wangyang.paxis.repo.LearnedValueRepository;
 import org.wangyang.paxis.repo.MinAcceptableProposalRepository;
 import org.wangyang.paxis.repo.NextProposalNumberRepository;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class PaxisApplicationService {
     private final MinAcceptableProposalRepository minAcceptableProposalRepository;
     private final AcceptedProposalValueRepository acceptedProposalValueRepository;
     private final NextProposalNumberRepository nextProposalNumberRepository;
+    private final LearnedValueRepository learnedValueRepository;
+    private final RestTemplate restTemplate;
 
     @Value("${spring.application.name}")
     private String applicationName;
@@ -35,7 +49,7 @@ public class PaxisApplicationService {
     @Value("#{'${paxos.node-list}'.split(',')}")
     private List<String> nodeList;
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public PrepareResponse prepare(Long instanceNumber, Long proposalNumber) {
         Optional<MinAcceptableProposal> minAcceptableProposalOptional = minAcceptableProposalRepository.findByInstanceNumber(instanceNumber);
 
@@ -66,7 +80,7 @@ public class PaxisApplicationService {
                 .build();
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void accept(Long instanceNumber, Long proposalNumber, String proposalValue) {
         Optional<MinAcceptableProposal> minAcceptableProposalOptional = minAcceptableProposalRepository.findByInstanceNumber(instanceNumber);
         minAcceptableProposalOptional.ifPresent(minAcceptableProposal -> {
@@ -89,7 +103,7 @@ public class PaxisApplicationService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void propose(Long instanceNumber, String proposalValue) {
+    public void propose(Long instanceNumber, String proposedValue) {
         Optional<NextProposalNumber> nextProposalNumberOptional = nextProposalNumberRepository.findById(instanceNumber);
         Long nextProposalNumber;
         if (nextProposalNumberOptional.isEmpty()) {
@@ -102,5 +116,73 @@ public class PaxisApplicationService {
             nextProposalNumberOptional.get().setProposalNumber(nextProposalNumber + clusterSize);
             nextProposalNumberRepository.save(nextProposalNumberOptional.get());
         }
+
+        List<PrepareResponse> prepareResponseList = nodeList.stream().map(node -> {
+            if (node.equals(applicationName)) {
+                return prepare(instanceNumber, nextProposalNumber);
+            }
+            String url = String.format("http://%s:8080/prepare", node);
+            PrepareRequest prepareRequest = new PrepareRequest(instanceNumber, nextProposalNumber);
+            try {
+                return restTemplate.postForEntity(url, prepareRequest, PrepareResponse.class).getBody();
+            } catch (RestClientException e) {
+                log.error("failed to get prepare response", e);
+                return null;
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+
+        if (prepareResponseList.size() <= clusterSize / 2) {
+            throw new IllegalStateException(String.format("prepare stage get only %s responses", prepareResponseList.size()));
+        }
+
+        String selectedValue = prepareResponseList.stream().filter(response -> Objects.nonNull(response.getProposalNumber()))
+                .max(Comparator.comparing(PrepareResponse::getProposalNumber)).map(PrepareResponse::getProposalValue)
+                .orElse(proposedValue);
+
+        int acceptedCount = nodeList.stream().mapToInt(node -> {
+            if (node.equals(applicationName)) {
+                accept(instanceNumber, nextProposalNumber, selectedValue);
+                return 1;
+            }
+            String url = String.format("http://%s:8080/accept", node);
+            AcceptRequest acceptRequest = new AcceptRequest(instanceNumber, nextProposalNumber, selectedValue);
+            try {
+                restTemplate.postForEntity(url, acceptRequest, Void.class);
+                return 1;
+            } catch (RestClientException e) {
+                log.error("failed to get accept response", e);
+                return 0;
+            }
+        }).sum();
+
+        if (acceptedCount <= clusterSize / 2) {
+            throw new IllegalArgumentException(String.format(String.format("accept stage failed with %s responses", acceptedCount)));
+        }
+
+        // learn value and propagate
+        nodeList.forEach(node -> {
+            if (node.equals(applicationName)) {
+                learn(instanceNumber, selectedValue);
+                return;
+            }
+            String url = String.format("http://%s:8080/learn", node);
+            LearnRequest learnRequest = new LearnRequest(instanceNumber, selectedValue);
+            try {
+                restTemplate.postForEntity(url, learnRequest, Void.class);
+            } catch (RestClientException e) {
+                log.error("failed to propagate proposal value", e);
+            }
+        });
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void learn(Long instanceNumber, String proposalValue) {
+        Optional<LearnedValue> learnedValueOptional = learnedValueRepository.findById(instanceNumber);
+        if (learnedValueOptional.isPresent()) {
+            return;
+        }
+
+        learnedValueRepository.save(LearnedValue.builder().instanceNumber(instanceNumber).proposalValue(proposalValue)
+                .build());
     }
 }

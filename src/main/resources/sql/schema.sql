@@ -14,3 +14,8 @@ CREATE TABLE IF NOT EXISTS `next_proposal_number` (
                                                          `proposal_number` BIGINT NOT NULL,
                                                          PRIMARY KEY (`instance_number`));
 
+CREATE TABLE IF NOT EXISTS `learned_value` (
+                                                      `instance_number` BIGINT NOT NULL,
+                                                      `proposal_value` VARCHAR(255) NOT NULL,
+                                                      PRIMARY KEY (`instance_number`));
+
