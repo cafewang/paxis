@@ -43,7 +43,7 @@ public class PaxisApplicationService {
     @Value("${paxos.cluster-size}")
     private Integer clusterSize;
 
-    @Value("${paxos.idx}")
+    @Value("#{'${spring.application.name}'.split('-')[1]}")
     private Integer idx;
 
     @Value("#{'${paxos.node-list}'.split(',')}")
@@ -121,7 +121,7 @@ public class PaxisApplicationService {
             if (node.equals(applicationName)) {
                 return prepare(instanceNumber, nextProposalNumber);
             }
-            String url = String.format("http://%s:8080/prepare", node);
+            String url = String.format("http://%s:8080/prepare", constructHostName(node));
             PrepareRequest prepareRequest = new PrepareRequest(instanceNumber, nextProposalNumber);
             try {
                 return restTemplate.postForEntity(url, prepareRequest, PrepareResponse.class).getBody();
@@ -144,7 +144,7 @@ public class PaxisApplicationService {
                 accept(instanceNumber, nextProposalNumber, selectedValue);
                 return 1;
             }
-            String url = String.format("http://%s:8080/accept", node);
+            String url = String.format("http://%s:8080/accept", constructHostName(node));
             AcceptRequest acceptRequest = new AcceptRequest(instanceNumber, nextProposalNumber, selectedValue);
             try {
                 restTemplate.postForEntity(url, acceptRequest, Void.class);
@@ -165,7 +165,7 @@ public class PaxisApplicationService {
                 learn(instanceNumber, selectedValue);
                 return;
             }
-            String url = String.format("http://%s:8080/learn", node);
+            String url = String.format("http://%s:8080/learn", constructHostName(node));
             LearnRequest learnRequest = new LearnRequest(instanceNumber, selectedValue);
             try {
                 restTemplate.postForEntity(url, learnRequest, Void.class);
@@ -184,5 +184,17 @@ public class PaxisApplicationService {
 
         learnedValueRepository.save(LearnedValue.builder().instanceNumber(instanceNumber).proposalValue(proposalValue)
                 .build());
+    }
+
+    private String constructHostName(String podName) {
+        return podName + ".paxis";
+    }
+
+    public String env() {
+        return String.join("\n", applicationName, clusterSize.toString(), idx.toString(), nodeList.toString());
+    }
+
+    public String learnedValue(Long instanceNumber) {
+        return learnedValueRepository.findById(instanceNumber).map(LearnedValue::getProposalValue).orElse(null);
     }
 }

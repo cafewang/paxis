@@ -1,8 +1,10 @@
 package org.wangyang.paxis.api;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.wangyang.paxis.api.request.AcceptRequest;
 import org.wangyang.paxis.api.request.LearnRequest;
@@ -36,5 +38,15 @@ public class PaxisController {
     @PostMapping("learn")
     public void learn(@RequestBody @Valid LearnRequest learnRequest) {
         paxisApplicationService.learn(learnRequest.getInstanceNumber(), learnRequest.getProposalValue());
+    }
+
+    @GetMapping("learnedValue")
+    public String learnedValue(@RequestParam Long instanceNumber) {
+        return paxisApplicationService.learnedValue(instanceNumber);
+    }
+
+    @GetMapping("env")
+    public String env() {
+        return paxisApplicationService.env();
     }
 }

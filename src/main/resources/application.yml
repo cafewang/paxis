@@ -13,10 +13,3 @@ spring:
   h2:
     console:
       enabled: true
-  application:
-    name: paxis-instance1
-
-paxos:
-  cluster-size: 5
-  idx: 0
-  node-list: paxis-instance1,paxis-instance2,paxis-instance3,paxis-instance4,paxis-instance5
